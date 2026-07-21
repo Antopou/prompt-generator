@@ -33,8 +33,36 @@ def _load_stats(lora: str, local: Path | None) -> tags.TagStats:
 def cmd_sync(args: argparse.Namespace) -> int:
     cfg = cfgmod.load(args.lora)
     print(f"Syncing '{args.lora}' from Drive: {cfg.drive_folder}")
-    downloaded, skipped = drive_sync.sync(args.lora, cfg.drive_folder)
+    def _p(i, total, msg):
+        print(f"  [{i}/{total}] {msg}")
+    downloaded, skipped = drive_sync.sync(args.lora, cfg.drive_folder, progress=_p)
     print(f"Done. {downloaded} downloaded, {skipped} unchanged.")
+    return 0
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    cfg = cfgmod.LoraConfig(
+        name=args.lora,
+        drive_folder=args.drive,
+        trigger=args.trigger,
+        base_model=args.base_model or "",
+        lora_file=args.lora_file or args.lora,
+        lora_weight=args.weight,
+    )
+    cfgmod.upsert_lora(cfg)
+    print(f"Saved [loras.{args.lora}] to {cfgmod.CONFIG_PATH}")
+    return 0
+
+
+def cmd_list(_args: argparse.Namespace) -> int:
+    for name in cfgmod.list_loras():
+        print(name)
+    return 0
+
+
+def cmd_gui(_args: argparse.Namespace) -> int:
+    from . import gui
+    gui.run()
     return 0
 
 
@@ -85,6 +113,18 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("lora")
     t.add_argument("--local", help="Use local dataset dir instead of Drive cache")
     t.set_defaults(func=cmd_tags)
+
+    a = sub.add_parser("add", help="Add/update a LoRA in config")
+    a.add_argument("lora", help="LoRA key name, e.g. chika")
+    a.add_argument("--drive", required=True, help="Drive folder path, ID, or share URL")
+    a.add_argument("--trigger", required=True, help="Trigger tag (first tag in captions)")
+    a.add_argument("--base-model", default="", help="Base checkpoint name (informational)")
+    a.add_argument("--lora-file", default=None, help="LoRA filename without extension (default = <lora>)")
+    a.add_argument("--weight", type=float, default=0.8)
+    a.set_defaults(func=cmd_add)
+
+    sub.add_parser("list", help="List configured LoRAs").set_defaults(func=cmd_list)
+    sub.add_parser("gui", help="Launch Tkinter GUI").set_defaults(func=cmd_gui)
 
     args = p.parse_args(argv)
     return args.func(args)

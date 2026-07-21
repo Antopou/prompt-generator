@@ -30,6 +30,39 @@ def bootstrap_config() -> None:
         CONFIG_PATH.write_text(DEFAULT_CONFIG)
 
 
+def list_loras() -> list[str]:
+    bootstrap_config()
+    data = tomllib.loads(CONFIG_PATH.read_text())
+    return sorted((data.get("loras") or {}).keys())
+
+
+def upsert_lora(cfg: LoraConfig) -> None:
+    """Append or replace a [loras.<name>] section in config.toml (text-level, preserves rest)."""
+    bootstrap_config()
+    text = CONFIG_PATH.read_text()
+    header = f"[loras.{cfg.name}]"
+    block = (
+        f"{header}\n"
+        f'drive_folder = "{cfg.drive_folder}"\n'
+        f'trigger = "{cfg.trigger}"\n'
+        f'base_model = "{cfg.base_model}"\n'
+        f'lora_file = "{cfg.lora_file}"\n'
+        f"lora_weight = {cfg.lora_weight}\n"
+    )
+    if header in text:
+        # replace existing section (from header until next [ or EOF)
+        import re
+        pattern = re.compile(
+            rf"{re.escape(header)}\n(?:(?!^\[).*\n?)*", re.MULTILINE
+        )
+        text = pattern.sub(block, text, count=1)
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += "\n" + block
+    CONFIG_PATH.write_text(text)
+
+
 def load(lora: str) -> LoraConfig:
     bootstrap_config()
     data = tomllib.loads(CONFIG_PATH.read_text())

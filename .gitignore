@@ -41,5 +41,3 @@ client_secrets.json
 token.json
 *.credentials
 .env
-
-kaguyasama_chika
