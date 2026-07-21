@@ -5,6 +5,7 @@ description = "SDXL prompt generator from LoRA training tag datasets"
 requires-python = ">=3.11"
 dependencies = [
     "pydrive2>=1.19.0",
+    "gradio>=4.44",
 ]
 
 [project.scripts]

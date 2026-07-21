@@ -363,7 +363,7 @@ class AddLoraDialog(tk.Toplevel):
         r = 0
         ttk.Label(frm, text="Name (key):").grid(row=r, column=0, sticky="e", padx=4, pady=3)
         ttk.Entry(frm, textvariable=self.vars["name"], width=40).grid(row=r, column=1, sticky="ew", pady=3)
-        ttk.Label(frm, text="e.g. chika", foreground="#888").grid(row=r, column=2, sticky="w", padx=4)
+        ttk.Label(frm, text="short key for this LoRA", foreground="#888").grid(row=r, column=2, sticky="w", padx=4)
         r += 1
 
         ttk.Label(frm, text="Drive folder:").grid(row=r, column=0, sticky="e", padx=4, pady=3)

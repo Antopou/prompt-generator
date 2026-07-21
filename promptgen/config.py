@@ -3,14 +3,7 @@ from dataclasses import dataclass
 from .paths import CONFIG_PATH, ensure_app_dir
 
 DEFAULT_CONFIG = """# promptgen config
-# One [loras.<name>] section per LoRA you train.
-
-[loras.chika]
-drive_folder = "Loras/kaguyasama_chika/dataset"
-trigger = "chika"
-base_model = "waiIllustriousSDXL_v160"
-lora_file = "kaguyasama_chika"
-lora_weight = 0.8
+# LoRAs are added via the GUI (or `promptgen add`). Each becomes a [loras.<name>] section.
 """
 
 
@@ -28,6 +21,18 @@ def bootstrap_config() -> None:
     ensure_app_dir()
     if not CONFIG_PATH.exists():
         CONFIG_PATH.write_text(DEFAULT_CONFIG)
+
+
+def remove_lora(name: str) -> bool:
+    bootstrap_config()
+    text = CONFIG_PATH.read_text()
+    header = f"[loras.{name}]"
+    if header not in text:
+        return False
+    import re
+    pattern = re.compile(rf"{re.escape(header)}\n(?:(?!^\[).*\n?)*", re.MULTILINE)
+    CONFIG_PATH.write_text(pattern.sub("", text, count=1))
+    return True
 
 
 def list_loras() -> list[str]:

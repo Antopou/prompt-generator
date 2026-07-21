@@ -66,6 +66,12 @@ def cmd_gui(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    from . import webapp
+    webapp.run(share=args.share, port=args.port)
+    return 0
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     cfg = cfgmod.load(args.lora)
     local = Path(args.local).expanduser() if args.local else None
@@ -115,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     t.set_defaults(func=cmd_tags)
 
     a = sub.add_parser("add", help="Add/update a LoRA in config")
-    a.add_argument("lora", help="LoRA key name, e.g. chika")
+    a.add_argument("lora", help="LoRA key name")
     a.add_argument("--drive", required=True, help="Drive folder path, ID, or share URL")
     a.add_argument("--trigger", required=True, help="Trigger tag (first tag in captions)")
     a.add_argument("--base-model", default="", help="Base checkpoint name (informational)")
@@ -124,7 +130,12 @@ def main(argv: list[str] | None = None) -> int:
     a.set_defaults(func=cmd_add)
 
     sub.add_parser("list", help="List configured LoRAs").set_defaults(func=cmd_list)
-    sub.add_parser("gui", help="Launch Tkinter GUI").set_defaults(func=cmd_gui)
+    sub.add_parser("gui", help="Launch Tkinter GUI (legacy)").set_defaults(func=cmd_gui)
+
+    w = sub.add_parser("web", help="Launch Gradio web UI (recommended)")
+    w.add_argument("--port", type=int, default=7871)
+    w.add_argument("--share", action="store_true", help="Create public Gradio share link")
+    w.set_defaults(func=cmd_web)
 
     args = p.parse_args(argv)
     return args.func(args)
