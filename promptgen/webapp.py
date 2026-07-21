@@ -18,11 +18,8 @@ from .scenes import SCENES
 
 # ------- helpers -------
 
-def _load_stats(lora: str, local_path: str = "") -> tags.TagStats | None:
-    if local_path:
-        dataset_dir = Path(local_path).expanduser()
-    else:
-        dataset_dir = lora_cache_dir(lora)
+def _load_stats(lora: str) -> tags.TagStats | None:
+    dataset_dir = lora_cache_dir(lora)
     if not any(dataset_dir.glob("*.txt")):
         return None
     caps = tags.load_captions(dataset_dir)
@@ -47,27 +44,18 @@ def _lora_choices() -> list[str]:
 
 # ------- Generate tab -------
 
-def do_generate(lora, scene, n, weight, seed, local_path):
+def do_generate(lora, scene, n):
     if not lora:
-        return "no LoRA selected. Add one in the Manage tab."
+        return [], "no LoRA selected. Add one in the Manage tab."
     try:
         cfg = cfgmod.load(lora)
     except KeyError as e:
-        return f"config error: {e}"
-    cfg.lora_weight = float(weight)
-    stats = _load_stats(lora, local_path.strip())
+        return [], f"config error: {e}"
+    stats = _load_stats(lora)
     if stats is None:
-        return f"no .txt tag files in cache for '{lora}'. Sync from Drive first (Manage tab)."
-    seed_val = int(seed) if str(seed).strip() else None
-    prompts = generate.build_many(cfg, stats, scene, int(n), seed=seed_val)
-    return "\n".join(p.render(i + 1) for i, p in enumerate(prompts))
-
-
-def first_positive(output_text: str) -> str:
-    for line in output_text.splitlines():
-        if line.startswith("POSITIVE: "):
-            return line[len("POSITIVE: "):]
-    return ""
+        return [], f"no .txt tag files in cache for '{lora}'. Sync from Drive first (Manage tab)."
+    prompts = generate.build_many(cfg, stats, scene, int(n))
+    return [p.positive for p in prompts], ""
 
 
 # ------- Manage tab -------
@@ -77,104 +65,75 @@ def refresh_choices():
     return gr.update(choices=names, value=(names[0] if names else None))
 
 
-def _list_at(folder_id: str):
-    """Return (rows, status). Rows: [title, id]."""
+def _find_loras_root() -> tuple[str | None, str]:
+    """Return (folder_id, status_msg). Uses saved setting; else looks for 'Loras' in My Drive root."""
+    saved = cfgmod.get_setting("loras_root_id")
+    if saved:
+        return saved, f"using saved Loras root ({saved[:12]}…)"
     try:
-        folders = drive_sync.list_folders(folder_id)
+        top = drive_sync.list_folders("root")
+    except Exception as e:
+        return None, f"error listing My Drive: {e}"
+    for f in top:
+        if f["title"].lower() == "loras":
+            cfgmod.set_setting("loras_root_id", f["id"])
+            return f["id"], f"found 'Loras' folder in My Drive"
+    return None, "no 'Loras' folder found in My Drive — click 'Set Loras root' to pick one"
+
+
+def list_all_loras():
+    """Return (rows, status). Rows: [name, imported?, drive_id]."""
+    root_id, status = _find_loras_root()
+    if root_id is None:
+        return [], status
+    try:
+        folders = drive_sync.list_folders(root_id)
     except Exception as e:
         return [], f"error: {e}"
-    rows = [[f["title"], f["id"]] for f in folders]
-    return rows, f"{len(rows)} subfolder(s)"
+    existing = set(cfgmod.list_loras())
+    rows = [[f["title"], "yes" if f["title"] in existing else "no", f["id"]] for f in folders]
+    return rows, f"{len(rows)} LoRA folder(s) found — click a row to import"
 
 
-def browse_navigate(target_id: str, target_name: str, crumbs: list):
-    """Navigate INTO a folder. Returns (rows, status, breadcrumb_md, new_crumbs, current_id)."""
-    if not crumbs:
-        crumbs = [{"id": "root", "name": "My Drive"}]
-    if target_id and target_id != crumbs[-1]["id"]:
-        crumbs = crumbs + [{"id": target_id, "name": target_name or target_id}]
-    current_id = crumbs[-1]["id"]
-    rows, status = _list_at(current_id)
-    return rows, status, _crumb_md(crumbs), crumbs, current_id
-
-
-def browse_up(crumbs: list):
-    if not crumbs:
-        crumbs = [{"id": "root", "name": "My Drive"}]
-    if len(crumbs) > 1:
-        crumbs = crumbs[:-1]
-    current_id = crumbs[-1]["id"]
-    rows, status = _list_at(current_id)
-    return rows, status, _crumb_md(crumbs), crumbs, current_id
-
-
-def browse_home(_crumbs=None):
-    crumbs = [{"id": "root", "name": "My Drive"}]
-    rows, status = _list_at("root")
-    return rows, status, _crumb_md(crumbs), crumbs, "root"
-
-
-def _crumb_md(crumbs: list) -> str:
-    if not crumbs:
-        return "**My Drive**"
-    return "**" + " / ".join(c["name"] for c in crumbs) + "**"
-
-
-def add_and_sync(name, drive_folder, trigger, base_model, lora_file, weight, do_sync,
-                 progress=gr.Progress()):
-    """Generator: yields log-string updates as steps complete."""
-    name = (name or "").strip()
-    drive_folder = (drive_folder or "").strip()
-    if not (name and drive_folder):
-        yield "ERROR: name + drive folder required"
+def import_lora(folder_name: str, folder_id: str, progress=gr.Progress()):
+    """Import a LoRA: find its `dataset` subfolder, sync, save config, detect trigger."""
+    name = folder_name.strip()
+    if not name or not folder_id:
+        yield f"invalid selection: name='{name}' id='{folder_id}'"
         return
+    yield f"[1/4] resolving '{name}' → looking for 'dataset' subfolder…"
+    try:
+        subs = drive_sync.list_folders(folder_id)
+    except Exception as e:
+        yield f"failed to list '{name}': {e}"; return
+    ds = next((s for s in subs if s["title"].lower() == "dataset"), None)
+    if not ds:
+        yield f"no 'dataset' subfolder inside '{name}'. Aborting."; return
+    dataset_id = ds["id"]
 
+    yield f"[2/4] saving config…"
     cfg = cfgmod.LoraConfig(
-        name=name,
-        drive_folder=drive_folder,
-        trigger=(trigger or "").strip() or name,
-        base_model=(base_model or "").strip(),
-        lora_file=(lora_file or "").strip() or name,
-        lora_weight=float(weight),
+        name=name, drive_folder=dataset_id, trigger=name,
+        base_model="", lora_file=name, lora_weight=0.8,
     )
     cfgmod.upsert_lora(cfg)
-    log = [f"[1/3] saved config: [loras.{name}]"]
-    yield "\n".join(log)
 
-    if not do_sync:
-        return
-
-    log.append(f"[2/3] syncing from Drive folder {drive_folder} …")
-    yield "\n".join(log)
-    progress(0, desc="sync starting")
-
+    yield f"[3/4] syncing .txt tag files…"
     try:
-        state = {"i": 0, "n": 0}
-
         def prog(i, total, msg):
-            state["i"], state["n"] = i, total
             progress(i / max(total, 1), desc=f"{i}/{total} {msg}")
-
-        dl, sk = drive_sync.sync(name, drive_folder, progress=prog)
-        log.append(f"     synced: {dl} downloaded, {sk} unchanged (of {state['n']} files)")
-        yield "\n".join(log)
+        dl, sk = drive_sync.sync(name, dataset_id, progress=prog)
     except Exception as e:
-        log.append(f"     sync FAILED: {type(e).__name__}: {e}")
-        yield "\n".join(log)
-        return
+        yield f"sync failed: {e}"; return
 
-    if not (trigger or "").strip():
-        t = _detect_trigger(name)
-        if t:
-            cfg.trigger = t
-            cfgmod.upsert_lora(cfg)
-            log.append(f"[3/3] auto-detected trigger tag: '{t}'")
-        else:
-            log.append("[3/3] no captions found for trigger detection")
-    else:
-        log.append(f"[3/3] using trigger tag: '{trigger}'")
-    log.append("DONE — switch to Generate tab and pick this LoRA")
-    yield "\n".join(log)
+    t = _detect_trigger(name)
+    if t:
+        cfg.trigger = t
+        cfgmod.upsert_lora(cfg)
+    yield (
+        f"[4/4] done — {name}: {dl} downloaded, {sk} unchanged, "
+        f"trigger='{t or name}'. Switch to Generate tab."
+    )
 
 
 def sync_existing(lora):
@@ -200,10 +159,10 @@ def remove_lora(lora):
 
 # ------- Tags tab -------
 
-def show_tags(lora, local_path):
+def show_tags(lora):
     if not lora:
         return "no LoRA selected"
-    stats = _load_stats(lora, local_path.strip())
+    stats = _load_stats(lora)
     if stats is None:
         return f"no cached tags for '{lora}'. Sync first."
     buckets = tags.classify(stats)
@@ -220,171 +179,153 @@ def show_tags(lora, local_path):
 
 def build_ui() -> gr.Blocks:
     initial = _lora_choices()
+    css = """
+    .prompt-card {
+        background: var(--background-fill-secondary);
+        border: 1px solid var(--border-color-primary);
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
+        font-family: var(--font-mono);
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--body-text-color);
+        position: relative;
+        box-shadow: var(--shadow-sm);
+    }
+    .prompt-card .txt { white-space: pre-wrap; word-break: break-word; padding-right: 70px; }
+    .prompt-card button.copy {
+        position: absolute; top: 12px; right: 12px;
+        background: var(--primary-500); color: white; border: none;
+        padding: 4px 12px; border-radius: 6px; cursor: pointer;
+        font-size: 12px; font-family: var(--font);
+        transition: background 0.2s;
+    }
+    .prompt-card button.copy:hover { background: var(--primary-600); }
+    .prompt-card button.copy.done { background: #16a34a; }
+    """
     with gr.Blocks(title="promptgen") as demo:
-        gr.Markdown("## promptgen — SDXL prompt generator from LoRA training tags")
+        demo._promptgen_css = css
+        gr.Markdown("## promptgen")
 
         with gr.Tabs():
             # ---- Generate ----
             with gr.Tab("Generate"):
-                with gr.Row():
-                    lora_dd = gr.Dropdown(choices=initial, value=(initial[0] if initial else None),
-                                          label="LoRA", allow_custom_value=False, scale=2)
-                    refresh_btn = gr.Button("↻", scale=0)
-                with gr.Row():
-                    scene_dd = gr.Dropdown(choices=list(SCENES), value="portrait", label="Scene")
-                    n_num = gr.Number(value=3, precision=0, label="N", minimum=1, maximum=20)
-                    weight_num = gr.Number(value=0.8, label="LoRA weight", minimum=0.1, maximum=1.5, step=0.05)
-                    seed_txt = gr.Textbox(value="", label="Seed (blank = random)")
-                local_txt = gr.Textbox(value="", label="Local dataset path (optional, overrides cache)")
-                gen_btn = gr.Button("Generate", variant="primary")
-                output_box = gr.Textbox(label="Prompts", lines=20)
-                copy_first_btn = gr.Button("Extract first POSITIVE (copyable)")
-                first_pos_box = gr.Textbox(label="First POSITIVE prompt", lines=3)
+                with gr.Group():
+                    with gr.Row():
+                        lora_dd = gr.Dropdown(choices=initial, value=(initial[0] if initial else None),
+                                              label="LoRA", scale=3)
+                        scene_dd = gr.Dropdown(choices=list(SCENES), value="portrait", label="Scene", scale=2)
+                        n_num = gr.Number(value=3, precision=0, label="N", minimum=1, maximum=20, scale=1)
+                    with gr.Row():
+                        refresh_btn = gr.Button("↻ Refresh", scale=1)
+                        gen_btn = gr.Button("Generate", variant="primary", scale=3)
+                gen_error = gr.Markdown("")
+                prompts_state = gr.State([])
 
-                gen_btn.click(
-                    do_generate,
-                    inputs=[lora_dd, scene_dd, n_num, weight_num, seed_txt, local_txt],
-                    outputs=output_box,
-                )
-                copy_first_btn.click(first_positive, inputs=output_box, outputs=first_pos_box)
+                @gr.render(inputs=prompts_state)
+                def _render_prompts(prompts):
+                    if not prompts:
+                        gr.Markdown("_no prompts yet — click Generate_")
+                        return
+                    import html as _html
+                    for text in prompts:
+                        esc = _html.escape(text)
+                        gr.HTML(
+                            f'<div class="prompt-card">'
+                            f'<button class="copy" onclick="'
+                            f"navigator.clipboard.writeText(this.nextElementSibling.textContent);"
+                            f"this.textContent='copied';this.classList.add('done');"
+                            f"setTimeout(()=>{{this.textContent='copy';this.classList.remove('done');}},1200);"
+                            f'">copy</button>'
+                            f'<div class="txt">{esc}</div>'
+                            f'</div>'
+                        )
+
+                gen_btn.click(do_generate,
+                              inputs=[lora_dd, scene_dd, n_num],
+                              outputs=[prompts_state, gen_error])
                 refresh_btn.click(refresh_choices, outputs=lora_dd)
 
             # ---- Manage ----
             with gr.Tab("Manage LoRAs"):
-                gr.Markdown("### Add a LoRA")
                 with gr.Row():
                     with gr.Column(scale=1):
-                        m_name = gr.Textbox(label="Name (short key, e.g. character name)")
-                        m_drive = gr.Textbox(label="Drive folder ID / share URL / slash-path",
-                                             placeholder="paste share URL or click a row below")
-                        m_trigger = gr.Textbox(label="Trigger tag (leave blank = auto-detect after sync)")
-                        m_base = gr.Textbox(label="Base model (informational)",
-                                            value="waiIllustriousSDXL_v160")
-                        m_file = gr.Textbox(label="LoRA filename without extension (blank = name)")
-                        m_weight = gr.Number(value=0.8, label="LoRA weight", minimum=0.1, maximum=1.5, step=0.05)
-                        m_sync = gr.Checkbox(value=True, label="Sync from Drive after saving")
-                        m_save_btn = gr.Button("Save + Sync", variant="primary")
+                        with gr.Group():
+                            root_txt = gr.Textbox(
+                                label="Drive root",
+                                placeholder="Loras root folder ID",
+                                value=cfgmod.get_setting("loras_root_id", ""),
+                                lines=1, max_lines=1,
+                            )
+                            with gr.Row():
+                                connect_btn = gr.Button("Connect / Refresh", variant="primary")
+                                set_root_btn = gr.Button("Save")
+                    
                     with gr.Column(scale=1):
-                        gr.Markdown("### Browse your Google Drive")
-                        gr.Markdown(
-                            "Click **Connect / Load My Drive** → browser will pop up first time "
-                            "asking you to log in with Google. After login, folder list appears. "
-                            "**Click any row to go into that folder.** Use ⬆ Up to go back. "
-                            "When you're inside your dataset folder, click **Use this folder** — "
-                            "the Drive folder field on the left gets filled automatically."
-                        )
-                        with gr.Row():
-                            b_home = gr.Button("Connect / Load My Drive", variant="primary")
-                            b_up = gr.Button("⬆ Up")
-                            b_use = gr.Button("✔ Use this folder", variant="secondary")
-                        b_crumb = gr.Markdown("**(not connected)**")
-                        b_current = gr.State("root")
-                        b_crumbs_state = gr.State([])
-                        b_table = gr.Dataframe(headers=["folder name", "id"], datatype=["str", "str"],
-                                               interactive=False, wrap=True)
-                        b_status = gr.Markdown("")
+                        with gr.Group():
+                            ex_dd = gr.Dropdown(
+                                choices=initial, value=(initial[0] if initial else None),
+                                label="Existing LoRA",
+                            )
+                            with gr.Row():
+                                ex_sync = gr.Button("Re-sync")
+                                ex_remove = gr.Button("Remove", variant="stop")
 
-                gr.Markdown("### Existing LoRAs")
-                with gr.Row():
-                    ex_dd = gr.Dropdown(choices=initial, value=(initial[0] if initial else None), label="LoRA")
-                    ex_sync = gr.Button("Sync")
-                    ex_remove = gr.Button("Remove", variant="stop")
+                m_status = gr.Markdown("")
                 ex_status = gr.Markdown("")
-
-                manage_log = gr.Textbox(label="Log", lines=6)
-
-                m_save_btn.click(
-                    add_and_sync,
-                    inputs=[m_name, m_drive, m_trigger, m_base, m_file, m_weight, m_sync],
-                    outputs=manage_log,
-                ).then(refresh_choices, outputs=lora_dd
-                ).then(refresh_choices, outputs=ex_dd)
-
-                b_home.click(
-                    browse_home,
-                    outputs=[b_table, b_status, b_crumb, b_crumbs_state, b_current],
+                m_table = gr.Dataframe(
+                    headers=["name", "imported", "id"],
+                    datatype=["str", "str", "str"],
+                    interactive=False, wrap=True,
                 )
-                b_up.click(
-                    browse_up,
-                    inputs=b_crumbs_state,
-                    outputs=[b_table, b_status, b_crumb, b_crumbs_state, b_current],
-                )
+                m_log = gr.Textbox(label="Log", lines=3)
 
-                def _row_click(evt: gr.SelectData, table, crumbs):
-                    """Row click = navigate INTO that folder."""
+                connect_btn.click(list_all_loras, outputs=[m_table, m_status])
+
+                def _save_root(v):
+                    v = (v or "").strip()
+                    if v:
+                        cfgmod.set_setting("loras_root_id", v)
+                        return f"saved root = {v}"
+                    return "empty — not saved"
+                set_root_btn.click(_save_root, inputs=root_txt, outputs=m_status)
+
+                def _row_import(evt: gr.SelectData, table):
                     try:
                         row = table.values.tolist()[evt.index[0]] if hasattr(table, "values") else table[evt.index[0]]
-                        name, folder_id = row[0], row[1]
+                        name, _imported, fid = row[0], row[1], row[2]
                     except Exception as e:
-                        return [], f"row error: {e}", _crumb_md(crumbs or []), crumbs or [], (crumbs[-1]["id"] if crumbs else "root")
-                    return browse_navigate(folder_id, name, crumbs or [])
+                        yield f"row error: {e}"; return
+                    yield from import_lora(name, fid)
 
-                b_table.select(
-                    _row_click,
-                    inputs=[b_table, b_crumbs_state],
-                    outputs=[b_table, b_status, b_crumb, b_crumbs_state, b_current],
-                )
-
-                b_use.click(lambda cid: cid, inputs=b_current, outputs=m_drive)
+                m_table.select(_row_import, inputs=m_table, outputs=m_log).then(
+                    refresh_choices, outputs=lora_dd
+                ).then(refresh_choices, outputs=ex_dd
+                ).then(list_all_loras, outputs=[m_table, m_status])
 
                 ex_sync.click(sync_existing, inputs=ex_dd, outputs=ex_status)
                 ex_remove.click(remove_lora, inputs=ex_dd, outputs=[ex_status, lora_dd]).then(
                     refresh_choices, outputs=ex_dd
-                )
-
-            # ---- Tags ----
-            with gr.Tab("Tags"):
-                with gr.Row():
-                    t_lora = gr.Dropdown(choices=initial, value=(initial[0] if initial else None), label="LoRA")
-                    t_refresh = gr.Button("↻", scale=0)
-                t_local = gr.Textbox(value="", label="Local dataset path (optional)")
-                t_btn = gr.Button("Show tags", variant="primary")
-                t_out = gr.Textbox(label="Frequency buckets", lines=25)
-                t_btn.click(show_tags, inputs=[t_lora, t_local], outputs=t_out)
-                t_refresh.click(refresh_choices, outputs=t_lora)
+                ).then(list_all_loras, outputs=[m_table, m_status])
 
     return demo
 
 
-def _sd_theme() -> gr.themes.Base:
-    """A1111/Forge-inspired theme: orange primary, dark bg, Source Sans font."""
-    return gr.themes.Default(
-        primary_hue=gr.themes.colors.orange,
-        secondary_hue=gr.themes.colors.orange,
+def _modern_theme() -> gr.themes.Base:
+    """Clean, modern, and simple theme."""
+    return gr.themes.Soft(
+        primary_hue=gr.themes.colors.indigo,
+        secondary_hue=gr.themes.colors.indigo,
         neutral_hue=gr.themes.colors.slate,
-        font=[gr.themes.GoogleFont("Source Sans Pro"), "system-ui", "sans-serif"],
-        font_mono=[gr.themes.GoogleFont("IBM Plex Mono"), "Menlo", "monospace"],
-    ).set(
-        body_background_fill="#0b0f19",
-        body_background_fill_dark="#0b0f19",
-        background_fill_primary="#1f2937",
-        background_fill_primary_dark="#1f2937",
-        background_fill_secondary="#111827",
-        background_fill_secondary_dark="#111827",
-        block_background_fill="#111827",
-        block_background_fill_dark="#111827",
-        block_border_color="#374151",
-        block_border_color_dark="#374151",
-        block_label_background_fill="#f97316",
-        block_label_background_fill_dark="#f97316",
-        block_label_text_color="#ffffff",
-        block_label_text_color_dark="#ffffff",
-        button_primary_background_fill="#f97316",
-        button_primary_background_fill_dark="#f97316",
-        button_primary_background_fill_hover="#ea580c",
-        button_primary_background_fill_hover_dark="#ea580c",
-        button_primary_text_color="#ffffff",
-        button_primary_text_color_dark="#ffffff",
-        button_secondary_background_fill="#374151",
-        button_secondary_background_fill_dark="#374151",
-        button_secondary_text_color="#ffffff",
-        button_secondary_text_color_dark="#ffffff",
-        input_background_fill="#0b0f19",
-        input_background_fill_dark="#0b0f19",
-        input_border_color="#374151",
-        input_border_color_dark="#374151",
+        font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
+        font_mono=[gr.themes.GoogleFont("Fira Code"), "monospace"],
     )
 
 
 def run(share: bool = False, port: int = 7871) -> None:
-    build_ui().launch(server_port=port, share=share, inbrowser=True, theme=_sd_theme())
+    ui = build_ui()
+    ui.launch(
+        server_port=port, share=share, inbrowser=True,
+        theme=_modern_theme(), css=getattr(ui, "_promptgen_css", None),
+    )

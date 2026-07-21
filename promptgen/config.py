@@ -23,6 +23,35 @@ def bootstrap_config() -> None:
         CONFIG_PATH.write_text(DEFAULT_CONFIG)
 
 
+def get_setting(key: str, default=None):
+    bootstrap_config()
+    data = tomllib.loads(CONFIG_PATH.read_text())
+    return (data.get("settings") or {}).get(key, default)
+
+
+def set_setting(key: str, value: str) -> None:
+    bootstrap_config()
+    text = CONFIG_PATH.read_text()
+    line = f'{key} = "{value}"'
+    import re
+    if "[settings]" in text:
+        # replace or append inside existing [settings] section
+        block = re.search(r"\[settings\]\n((?:(?!^\[).*\n?)*)", text, re.MULTILINE)
+        section_text = block.group(1) if block else ""
+        if re.search(rf"^{re.escape(key)}\s*=", section_text, re.MULTILINE):
+            new_section = re.sub(
+                rf"^{re.escape(key)}\s*=.*$", line, section_text, count=1, flags=re.MULTILINE
+            )
+        else:
+            new_section = section_text.rstrip("\n") + f"\n{line}\n"
+        text = text.replace(block.group(0), f"[settings]\n{new_section}")
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += f"\n[settings]\n{line}\n"
+    CONFIG_PATH.write_text(text)
+
+
 def remove_lora(name: str) -> bool:
     bootstrap_config()
     text = CONFIG_PATH.read_text()
