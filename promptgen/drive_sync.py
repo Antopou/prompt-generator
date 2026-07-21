@@ -80,6 +80,11 @@ def _resolve_folder(drive, path: str) -> str:
 
 def list_folders(parent_id: str = "root") -> list[dict]:
     """Return [{id, title}] for subfolders of parent_id. Use 'root' for My Drive root."""
+    parent_path = Path(parent_id)
+    if parent_path.is_dir():
+        dirs = [d for d in parent_path.iterdir() if d.is_dir()]
+        return sorted([{"id": str(d), "title": d.name} for d in dirs], key=lambda x: x["title"].lower())
+
     drive = _drive()
     q = (
         f"'{parent_id}' in parents and trashed = false "
@@ -99,6 +104,33 @@ def sync(lora: str, drive_folder: str, progress=None) -> tuple[int, int]:
     or a full Drive share URL.
     `progress`, if given, called as progress(current, total, title).
     """
+    import shutil
+    import hashlib
+
+    # Check if the folder is actually a local directory (e.g. mounted Colab drive)
+    local_source = Path(drive_folder)
+    if local_source.is_dir():
+        cache = lora_cache_dir(lora)
+        downloaded = skipped = 0
+        txt_files = list(local_source.glob("*.txt"))
+        total = len(txt_files)
+        for i, f in enumerate(txt_files, 1):
+            title = f.name
+            local = cache / title
+            if local.exists():
+                local_md5 = hashlib.md5(local.read_bytes()).hexdigest()
+                remote_md5 = hashlib.md5(f.read_bytes()).hexdigest()
+                if local_md5 == remote_md5:
+                    skipped += 1
+                    if progress:
+                        progress(i, max(total, 1), f"skip {title}")
+                    continue
+            shutil.copy2(f, local)
+            downloaded += 1
+            if progress:
+                progress(i, max(total, 1), f"copy {title}")
+        return downloaded, skipped
+
     drive = _drive()
 
     folder_id = extract_folder_id(drive_folder)
