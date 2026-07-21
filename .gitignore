@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.Python
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Packaging / editable installs
+pip-wheel-metadata/
+*.pth
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dataset artifacts (heavy, regenerable from Drive)
+*.npz
+kaguyasama_chika/output/
+
+# Local secrets / caches (never commit)
+.promptgen/
+client_secrets.json
+token.json
+*.credentials
+.env
+
+kaguyasama_chika
