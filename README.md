@@ -1,12 +1,10 @@
 # Prompt Generator
 
-SDXL prompt generator built from LoRA training tag datasets. Ships a Gradio web interface with dataset sync from Google Drive, per-LoRA tag inspection, a reusable tag-group library, and free-form preset extras.
+SDXL prompt generator built from LoRA training tag datasets. Gradio web interface, Google Drive dataset sync, reusable tag-group library, scene-aware auto-composition.
 
 ## Launch on Google Colab
 
-| Notebook | Link |
-|---|---|
-| Web interface (Gradio) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/antopou/prompt-generator/blob/main/PromptGenerator_Colab.ipynb) |
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/antopou/prompt-generator/blob/main/Prompt_Generator_Colab.ipynb)
 
 ## Run locally
 
@@ -47,7 +45,3 @@ prompt-generator list
 prompt-generator web [--port 7871] [--share]
 prompt-generator gui
 ```
-
-## Project naming
-
-The Python package currently lives under the generic folder `src/` while a permanent project name is chosen. Once settled, the folder, entry point, and user-data directory will be renamed together.
