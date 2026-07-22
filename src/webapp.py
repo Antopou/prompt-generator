@@ -384,8 +384,8 @@ def build_ui() -> gr.Blocks:
                     categories_state = gr.State(groups.list_categories())
                     selections_state = gr.State({})
 
-                    @gr.render(inputs=[categories_state, selections_state])
-                    def _render_groups(cats, sel):
+                    @gr.render(inputs=categories_state)
+                    def _render_groups(cats):
                         non_empty = [c for c in (cats or []) if (c.get("groups") or {})]
                         if not non_empty:
                             gr.Markdown("*no groups yet — add some in the Groups tab*")
@@ -395,7 +395,7 @@ def build_ui() -> gr.Blocks:
                             gnames = sorted((c.get("groups") or {}).keys())
                             dd = gr.Dropdown(
                                 choices=gnames,
-                                value=sel.get(cname, []),
+                                value=[],
                                 multiselect=True,
                                 label=cname,
                                 interactive=True,
