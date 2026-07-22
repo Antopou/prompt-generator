@@ -1,4 +1,4 @@
-"""Tkinter GUI for promptgen.
+"""Tkinter GUI for Prompt Generator.
 
 Layout:
   Top row: LoRA dropdown | Sync btn | Add LoRA btn
@@ -29,7 +29,7 @@ def _copy(text: str) -> bool:
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title("promptgen — SDXL prompt generator")
+        root.title("Prompt Generator — SDXL prompt generator")
         root.geometry("900x680")
 
         frm = ttk.Frame(root, padding=10)

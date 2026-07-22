@@ -1,5 +1,5 @@
 [project]
-name = "promptgen"
+name = "prompt-generator"
 version = "0.1.0"
 description = "SDXL prompt generator from LoRA training tag datasets"
 requires-python = ">=3.11"
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-promptgen = "promptgen.cli:main"
+prompt-generator = "src.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -17,4 +17,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["promptgen*"]
+include = ["src*"]

@@ -2,8 +2,8 @@ import tomllib
 from dataclasses import dataclass
 from .paths import CONFIG_PATH, ensure_app_dir
 
-DEFAULT_CONFIG = """# promptgen config
-# LoRAs are added via the GUI (or `promptgen add`). Each becomes a [loras.<name>] section.
+DEFAULT_CONFIG = """# Prompt Generator config
+# LoRAs are added via the GUI (or `prompt-generator add`). Each becomes a [loras.<name>] section.
 """
 
 

@@ -1,4 +1,4 @@
-"""Gradio web UI for promptgen.
+"""Gradio web UI for Prompt Generator.
 
 Tabs:
   Generate — pick LoRA, scene, N; get prompts
@@ -11,7 +11,7 @@ from pathlib import Path
 import gradio as gr
 
 from . import config as cfgmod
-from . import drive_sync, generate, tags
+from . import drive_sync, generate, groups, presets, tags
 from .paths import lora_cache_dir
 from .scenes import SCENES
 
@@ -44,7 +44,7 @@ def _lora_choices() -> list[str]:
 
 # ------- Generate tab -------
 
-def do_generate(lora, scene, n):
+def do_generate(lora, scene, n, extra_text, selections):
     if not lora:
         return [], "no LoRA selected. Add one in the Manage tab."
     try:
@@ -54,8 +54,136 @@ def do_generate(lora, scene, n):
     stats = _load_stats(lora)
     if stats is None:
         return [], f"no .txt tag files in cache for '{lora}'. Sync from Drive first (Manage tab)."
-    prompts = generate.build_many(cfg, stats, scene, int(n))
+    overrides, extras_from_groups = groups.resolve_selection(selections or {})
+    extra = list(extras_from_groups)
+    for t in presets.parse_tags(extra_text or ""):
+        if t not in extra:
+            extra.append(t)
+    prompts = generate.build_many(
+        cfg, stats, scene, int(n), extra_tags=extra, overrides=overrides
+    )
     return [p.positive for p in prompts], ""
+
+
+# ------- Preset helpers -------
+
+def _preset_choices() -> list[str]:
+    return presets.list_names()
+
+
+def load_preset(name):
+    return presets.get(name) if name else ""
+
+
+def save_preset(name, text):
+    name = (name or "").strip()
+    if not name:
+        return "empty name", gr.update()
+    presets.save(name, text or "")
+    names = _preset_choices()
+    return f"saved preset '{name}'", gr.update(choices=names, value=name)
+
+
+def delete_preset(name):
+    if not name:
+        return "no preset selected", gr.update(), ""
+    ok = presets.delete(name)
+    names = _preset_choices()
+    val = names[0] if names else None
+    msg = f"deleted '{name}'" if ok else f"'{name}' not found"
+    new_tags = presets.get(val) if val else ""
+    return msg, gr.update(choices=names, value=val), new_tags
+
+
+# ------- Groups tab helpers -------
+
+_OVERRIDES_UI = ["none", "outfit", "pose", "expression", "framing", "background"]
+
+
+def _to_ov(v):
+    return None if not v or v == "none" else v
+
+
+def _from_ov(v):
+    return "none" if v is None else v
+
+
+def _cat_choices():
+    return groups.category_names()
+
+
+def gt_save_category(name, overrides_ui):
+    name = (name or "").strip()
+    if not name:
+        return "empty name", gr.update()
+    try:
+        groups.upsert_category(name, _to_ov(overrides_ui))
+    except ValueError as e:
+        return f"error: {e}", gr.update()
+    names = _cat_choices()
+    return f"saved category '{name}'", gr.update(choices=names, value=name)
+
+
+def gt_delete_category(name):
+    if not name:
+        return "no category selected", gr.update(), gr.update(), gr.update(choices=[], value=None), "", ""
+    ok = groups.delete_category(name)
+    names = _cat_choices()
+    val = names[0] if names else None
+    cat = groups.get_category(val) if val else None
+    return (
+        (f"deleted '{name}'" if ok else f"'{name}' not found"),
+        gr.update(choices=names, value=val),
+        gr.update(value=_from_ov((cat or {}).get("overrides"))) if cat else gr.update(value="none"),
+        gr.update(choices=groups.list_groups(val) if val else [], value=None),
+        "",
+        "",
+    )
+
+
+def gt_pick_category(name):
+    """Selected a category → load its overrides + refresh group dropdown."""
+    if not name:
+        return gr.update(value="none"), gr.update(choices=[], value=None), "", ""
+    c = groups.get_category(name) or {}
+    ov = _from_ov(c.get("overrides"))
+    gnames = groups.list_groups(name)
+    return (
+        gr.update(value=ov),
+        gr.update(choices=gnames, value=None),
+        "",  # clear group name box
+        "",  # clear tags box
+    )
+
+
+def gt_pick_group(cat_name, group_name):
+    if not cat_name or not group_name:
+        return "", ""
+    return group_name, groups.get_group(cat_name, group_name)
+
+
+def gt_save_group(cat_name, group_name, tags_text):
+    if not cat_name:
+        return "pick a category first", gr.update()
+    try:
+        groups.upsert_group(cat_name, (group_name or "").strip(), tags_text or "")
+    except (ValueError, KeyError) as e:
+        return f"error: {e}", gr.update()
+    gnames = groups.list_groups(cat_name)
+    return f"saved group '{group_name}' in '{cat_name}'", gr.update(choices=gnames, value=group_name)
+
+
+def gt_delete_group(cat_name, group_name):
+    if not cat_name or not group_name:
+        return "no group selected", gr.update(), "", ""
+    ok = groups.delete_group(cat_name, group_name)
+    gnames = groups.list_groups(cat_name)
+    return (
+        f"deleted '{group_name}'" if ok else f"'{group_name}' not found",
+        gr.update(choices=gnames, value=None),
+        "",
+        "",
+    )
 
 
 # ------- Manage tab -------
@@ -179,6 +307,7 @@ def show_tags(lora):
 
 def build_ui() -> gr.Blocks:
     initial = _lora_choices()
+    initial_presets = _preset_choices()
     css = """
     .prompt-card {
         background: var(--background-fill-secondary);
@@ -204,9 +333,9 @@ def build_ui() -> gr.Blocks:
     .prompt-card button.copy:hover { background: var(--primary-600); }
     .prompt-card button.copy.done { background: #16a34a; }
     """
-    with gr.Blocks(title="promptgen") as demo:
+    with gr.Blocks(title="Prompt Generator") as demo:
         demo._promptgen_css = css
-        gr.Markdown("## promptgen")
+        gr.Markdown("## Prompt Generator")
 
         with gr.Tabs():
             # ---- Generate ----
@@ -220,6 +349,67 @@ def build_ui() -> gr.Blocks:
                     with gr.Row():
                         refresh_btn = gr.Button("↻ Refresh", scale=1)
                         gen_btn = gr.Button("Generate", variant="primary", scale=3)
+
+                with gr.Accordion("Groups (pick per category)", open=True):
+                    with gr.Row():
+                        groups_reload_btn = gr.Button("↻ Reload groups", scale=1)
+                        groups_clear_btn = gr.Button("Clear selections", scale=1)
+                    categories_state = gr.State(groups.list_categories())
+                    selections_state = gr.State({})
+                    groups_hint = gr.Markdown(
+                        "_no categories yet — create some in the **Groups** tab_"
+                        if not groups.list_categories() else ""
+                    )
+
+                    @gr.render(inputs=[categories_state, selections_state])
+                    def _render_groups(cats, sel):
+                        if not cats:
+                            return
+                        for c in cats:
+                            cname = c["name"]
+                            ov = c.get("overrides") or "extras"
+                            gnames = sorted((c.get("groups") or {}).keys())
+                            dd = gr.Dropdown(
+                                choices=gnames,
+                                value=sel.get(cname, []),
+                                multiselect=True,
+                                label=f"{cname} → {ov}",
+                                interactive=True,
+                            )
+
+                            def _make_updater(cat=cname):
+                                def _update(picked, current):
+                                    current = dict(current or {})
+                                    current[cat] = picked or []
+                                    return current
+                                return _update
+
+                            dd.change(_make_updater(), inputs=[dd, selections_state],
+                                      outputs=selections_state)
+
+                with gr.Accordion("Presets (extra tags)", open=False):
+                    with gr.Row():
+                        preset_dd = gr.Dropdown(
+                            choices=initial_presets,
+                            value=(initial_presets[0] if initial_presets else None),
+                            label="Preset", scale=2, allow_custom_value=False,
+                        )
+                        preset_name = gr.Textbox(
+                            label="Name (for save)", scale=2,
+                            value=(initial_presets[0] if initial_presets else ""),
+                            placeholder="e.g. side_view",
+                        )
+                    preset_tags = gr.Textbox(
+                        label="Tags (comma-separated, appended to prompt)",
+                        lines=2, placeholder="from side, looking to the side",
+                        value=(presets.get(initial_presets[0]) if initial_presets else ""),
+                    )
+                    with gr.Row():
+                        preset_save = gr.Button("Save")
+                        preset_delete = gr.Button("Delete", variant="stop")
+                        preset_refresh = gr.Button("↻")
+                    preset_status = gr.Markdown("")
+
                 gen_error = gr.Markdown("")
                 prompts_state = gr.State([])
 
@@ -243,9 +433,116 @@ def build_ui() -> gr.Blocks:
                         )
 
                 gen_btn.click(do_generate,
-                              inputs=[lora_dd, scene_dd, n_num],
+                              inputs=[lora_dd, scene_dd, n_num, preset_tags, selections_state],
                               outputs=[prompts_state, gen_error])
                 refresh_btn.click(refresh_choices, outputs=lora_dd)
+
+                # groups wiring
+                def _reload_groups_state():
+                    cats = groups.list_categories()
+                    hint = "" if cats else "_no categories yet — create some in the **Groups** tab_"
+                    return cats, {}, hint
+                groups_reload_btn.click(
+                    _reload_groups_state,
+                    outputs=[categories_state, selections_state, groups_hint],
+                )
+                groups_clear_btn.click(lambda: {}, outputs=selections_state)
+
+                # preset wiring
+                def _on_preset_pick(name):
+                    return presets.get(name) if name else "", (name or "")
+                preset_dd.change(_on_preset_pick, inputs=preset_dd,
+                                 outputs=[preset_tags, preset_name])
+                preset_save.click(save_preset, inputs=[preset_name, preset_tags],
+                                  outputs=[preset_status, preset_dd])
+                preset_delete.click(delete_preset, inputs=preset_dd,
+                                    outputs=[preset_status, preset_dd, preset_tags])
+
+                def _refresh_presets():
+                    names = _preset_choices()
+                    return gr.update(choices=names, value=(names[0] if names else None))
+                preset_refresh.click(_refresh_presets, outputs=preset_dd)
+
+            # ---- Groups (library editor) ----
+            with gr.Tab("Groups"):
+                gr.Markdown(
+                    "Build a library of tag groups. Categories with an **override** "
+                    "bucket replace the auto-pick for that bucket. Categories with "
+                    "`none` append their tags as extras."
+                )
+                initial_cats = _cat_choices()
+                initial_cat_val = initial_cats[0] if initial_cats else None
+                initial_cat_obj = groups.get_category(initial_cat_val) if initial_cat_val else None
+                initial_ov = _from_ov((initial_cat_obj or {}).get("overrides"))
+                initial_group_names = groups.list_groups(initial_cat_val) if initial_cat_val else []
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Category")
+                        cat_dd = gr.Dropdown(
+                            choices=initial_cats, value=initial_cat_val,
+                            label="Existing category", allow_custom_value=False,
+                        )
+                        cat_name_in = gr.Textbox(
+                            label="Name (new or existing)",
+                            value=initial_cat_val or "",
+                            placeholder="e.g. outfit, place, action",
+                        )
+                        cat_ov_dd = gr.Dropdown(
+                            choices=_OVERRIDES_UI, value=initial_ov,
+                            label="Overrides bucket",
+                        )
+                        with gr.Row():
+                            cat_save_btn = gr.Button("Save category", variant="primary")
+                            cat_delete_btn = gr.Button("Delete category", variant="stop")
+                        cat_status = gr.Markdown("")
+
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Group (inside selected category)")
+                        group_dd = gr.Dropdown(
+                            choices=initial_group_names, value=None,
+                            label="Existing group", allow_custom_value=False,
+                        )
+                        group_name_in = gr.Textbox(
+                            label="Group name",
+                            placeholder="e.g. school_uniform",
+                        )
+                        group_tags_in = gr.Textbox(
+                            label="Tags (comma-separated)",
+                            lines=4,
+                            placeholder="white shirt, pleated skirt, red ribbon, thighhighs",
+                        )
+                        with gr.Row():
+                            group_save_btn = gr.Button("Save group", variant="primary")
+                            group_delete_btn = gr.Button("Delete group", variant="stop")
+                        group_status = gr.Markdown("")
+
+                cat_dd.change(
+                    gt_pick_category, inputs=cat_dd,
+                    outputs=[cat_ov_dd, group_dd, group_name_in, group_tags_in],
+                ).then(lambda v: v or "", inputs=cat_dd, outputs=cat_name_in)
+
+                cat_save_btn.click(
+                    gt_save_category, inputs=[cat_name_in, cat_ov_dd],
+                    outputs=[cat_status, cat_dd],
+                )
+                cat_delete_btn.click(
+                    gt_delete_category, inputs=cat_dd,
+                    outputs=[cat_status, cat_dd, cat_ov_dd, group_dd, group_name_in, group_tags_in],
+                )
+
+                group_dd.change(
+                    gt_pick_group, inputs=[cat_dd, group_dd],
+                    outputs=[group_name_in, group_tags_in],
+                )
+                group_save_btn.click(
+                    gt_save_group, inputs=[cat_dd, group_name_in, group_tags_in],
+                    outputs=[group_status, group_dd],
+                )
+                group_delete_btn.click(
+                    gt_delete_group, inputs=[cat_dd, group_dd],
+                    outputs=[group_status, group_dd, group_name_in, group_tags_in],
+                )
 
             # ---- Manage ----
             with gr.Tab("Manage LoRAs"):

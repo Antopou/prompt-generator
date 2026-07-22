@@ -5,13 +5,37 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
 OUTFIT_KEYWORDS = {
-    "shirt", "dress", "bikini", "uniform", "skirt", "jacket", "panties", "bra",
-    "swimsuit", "shorts", "pants", "coat", "sweater", "hoodie", "socks",
-    "stockings", "thighhighs", "gloves", "shoes", "boots", "sandals",
-    "flip-flops", "footwear", "lingerie", "underwear", "kimono", "cape",
-    "ribbon", "necktie", "tie", "scarf", "cleavage", "sideboob", "navel",
-    "bare shoulders", "bare arms", "bare legs", "bow", "frills", "collar",
-    "collared", "sleeves", "cardigan", "vest", "apron", "leotard",
+    # tops
+    "shirt", "blouse", "dress", "bikini", "uniform", "jacket", "bra",
+    "swimsuit", "coat", "sweater", "hoodie", "kimono", "cape", "cardigan",
+    "vest", "apron", "leotard", "turtleneck", "crop top", "camisole",
+    "tank top", "off-shoulder", "bare shoulders", "bare arms", "cleavage",
+    "sideboob", "underboob", "navel", "midriff",
+    # bottoms
+    "skirt", "miniskirt", "pleated skirt", "shorts", "pants", "jeans",
+    "hakama", "bloomers",
+    # legs / underwear
+    "panties", "lingerie", "underwear", "thighhighs", "stockings", "socks",
+    "kneehighs", "garter", "garter belt", "bare legs", "pantyhose",
+    "zettai ryouiki",
+    # feet
+    "shoes", "boots", "sandals", "flip-flops", "footwear", "high heels",
+    "loafers", "sneakers",
+    # neck / chest accents
+    "ribbon", "necktie", "tie", "scarf", "collar", "collared", "choker",
+    "necklace", "bow", "bowtie",
+    # sleeves / hands
+    "sleeves", "long sleeves", "short sleeves", "detached sleeves",
+    "puffy sleeves", "sleeveless", "gloves", "fingerless gloves", "wristband",
+    "bracelet",
+    # head
+    "hat", "cap", "beret", "hood", "hairband", "headband", "hair ornament",
+    "hair ribbon", "hair bow", "hairclip", "veil", "crown",
+    # face
+    "glasses", "sunglasses", "eyepatch", "mask", "earrings",
+    # details
+    "frills", "belt", "buckle", "zipper", "pocket", "pockets", "buttons",
+    "sash", "cross", "pendant",
 }
 POSE_KEYWORDS = {
     "standing", "sitting", "squatting", "kneeling", "lying", "arms up",

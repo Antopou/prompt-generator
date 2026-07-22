@@ -24,7 +24,7 @@ def _load_stats(lora: str, local: Path | None) -> tags.TagStats:
     if not any(dataset_dir.glob("*.txt")):
         raise SystemExit(
             f"No .txt tag files found in {dataset_dir}. "
-            f"Run `promptgen sync {lora}` first, or pass --local <dataset_dir>."
+            f"Run `prompt-generator sync {lora}` first, or pass --local <dataset_dir>."
         )
     caps = tags.load_captions(dataset_dir)
     return tags.analyze(caps)
@@ -100,7 +100,7 @@ def cmd_tags(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="promptgen", description="SDXL prompt generator from LoRA training tags")
+    p = argparse.ArgumentParser(prog="prompt-generator", description="SDXL prompt generator from LoRA training tags")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     g = sub.add_parser("gen", help="Generate prompts")

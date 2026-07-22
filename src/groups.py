@@ -1,0 +1,164 @@
+"""User-defined tag-group library stored at ~/.promptgen/groups.json.
+
+Data shape:
+{
+  "categories": [
+    {"name": "outfit", "overrides": "outfit",
+     "groups": {"school": "white shirt, pleated skirt", ...}},
+    {"name": "extras", "overrides": None, "groups": {...}},
+    ...
+  ]
+}
+
+`overrides` is one of: None, "outfit", "pose", "expression", "framing",
+"background". When set, selected groups' tags replace the auto-pick for
+that bucket during generation.
+"""
+import json
+from pathlib import Path
+
+from .paths import APP_DIR, ensure_app_dir
+
+GROUPS_PATH: Path = APP_DIR / "groups.json"
+
+VALID_BUCKETS = {"outfit", "pose", "expression", "framing", "background"}
+
+
+def load() -> dict:
+    ensure_app_dir()
+    if not GROUPS_PATH.exists():
+        return {"categories": []}
+    try:
+        data = json.loads(GROUPS_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"categories": []}
+    if not isinstance(data, dict) or not isinstance(data.get("categories"), list):
+        return {"categories": []}
+    return data
+
+
+def save(data: dict) -> None:
+    ensure_app_dir()
+    GROUPS_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def list_categories() -> list[dict]:
+    return load()["categories"]
+
+
+def category_names() -> list[str]:
+    return [c["name"] for c in list_categories()]
+
+
+def get_category(name: str) -> dict | None:
+    for c in list_categories():
+        if c["name"] == name:
+            return c
+    return None
+
+
+def upsert_category(name: str, overrides: str | None) -> None:
+    name = name.strip()
+    if not name:
+        raise ValueError("category name empty")
+    if overrides is not None and overrides not in VALID_BUCKETS:
+        raise ValueError(f"invalid overrides '{overrides}'; must be one of {sorted(VALID_BUCKETS)} or None")
+    data = load()
+    for c in data["categories"]:
+        if c["name"] == name:
+            c["overrides"] = overrides
+            save(data)
+            return
+    data["categories"].append({"name": name, "overrides": overrides, "groups": {}})
+    save(data)
+
+
+def delete_category(name: str) -> bool:
+    data = load()
+    before = len(data["categories"])
+    data["categories"] = [c for c in data["categories"] if c["name"] != name]
+    if len(data["categories"]) == before:
+        return False
+    save(data)
+    return True
+
+
+def list_groups(cat_name: str) -> list[str]:
+    c = get_category(cat_name)
+    return sorted((c or {}).get("groups", {}).keys())
+
+
+def get_group(cat_name: str, group_name: str) -> str:
+    c = get_category(cat_name)
+    if not c:
+        return ""
+    return c.get("groups", {}).get(group_name, "")
+
+
+def upsert_group(cat_name: str, group_name: str, tags: str) -> None:
+    group_name = group_name.strip()
+    if not group_name:
+        raise ValueError("group name empty")
+    data = load()
+    for c in data["categories"]:
+        if c["name"] == cat_name:
+            c.setdefault("groups", {})[group_name] = (tags or "").strip()
+            save(data)
+            return
+    raise KeyError(f"category '{cat_name}' does not exist")
+
+
+def delete_group(cat_name: str, group_name: str) -> bool:
+    data = load()
+    for c in data["categories"]:
+        if c["name"] == cat_name:
+            groups = c.setdefault("groups", {})
+            if group_name in groups:
+                del groups[group_name]
+                save(data)
+                return True
+    return False
+
+
+def parse_tags(text: str) -> list[str]:
+    return [t.strip() for t in (text or "").split(",") if t.strip()]
+
+
+def resolve_selection(
+    selection: dict[str, list[str]],
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Turn {category_name: [group_names]} into (overrides_by_bucket, extras).
+
+    - overrides_by_bucket: bucket -> deduped tag list from selected groups
+      in categories whose `overrides` matches that bucket.
+    - extras: deduped tag list from selected groups in categories whose
+      `overrides` is None.
+    """
+    data = load()
+    by_bucket: dict[str, list[str]] = {}
+    extras: list[str] = []
+    for c in data["categories"]:
+        picked = selection.get(c["name"]) or []
+        if not picked:
+            continue
+        tags: list[str] = []
+        for gname in picked:
+            tags.extend(parse_tags(c.get("groups", {}).get(gname, "")))
+        # dedupe preserving order
+        seen = set()
+        deduped = []
+        for t in tags:
+            if t not in seen:
+                seen.add(t)
+                deduped.append(t)
+        bucket = c.get("overrides")
+        if bucket in VALID_BUCKETS:
+            existing = by_bucket.setdefault(bucket, [])
+            for t in deduped:
+                if t not in existing:
+                    existing.append(t)
+        else:
+            for t in deduped:
+                if t not in extras:
+                    extras.append(t)
+    return by_bucket, extras
