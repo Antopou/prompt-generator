@@ -5,6 +5,8 @@ from .config import LoraConfig
 from .scenes import SCENES
 from .tags import TagStats, classify
 
+_CLOSED_EYES = {"closed eyes", "eyes closed", "one eye closed", "^_^", ">_<"}
+
 # body-region order for outfit tags. Lower index = closer to head.
 _REGION_ORDER = [
     # head
@@ -107,6 +109,7 @@ def build_prompt(
     extra_tags: list[str] | None = None,
     overrides: dict[str, list[str]] | None = None,
     exclude: set[str] | None = None,
+    block_closed_eyes: bool = False,
 ) -> Prompt:
     if scene not in SCENES:
         raise KeyError(f"Unknown scene '{scene}'. Options: {list(SCENES)}")
@@ -121,8 +124,22 @@ def build_prompt(
         if tag and tag not in parts and tag.strip().lower() not in ex:
             parts.append(tag)
 
+    # pre-pick expression so we can skip eye_color if eyes are closed
+    if ov.get("expression"):
+        expression_picks = list(ov["expression"])
+    else:
+        _n_expr = recipe.get("expression_n", 0)
+        _expr_pool = buckets["expression"][:5]
+        if block_closed_eyes:
+            _expr_pool = [it for it in _expr_pool if it[0].strip().lower() not in _CLOSED_EYES]
+        expression_picks = _pick(rng, _expr_pool, _n_expr) if _n_expr else []
+
+    skip_eye_color = any(t.strip().lower() in _CLOSED_EYES for t in expression_picks)
+
     # identity — top-1 of each if present (never overridable)
     for key in ("hair_length", "hair_color", "eye_color", "bangs"):
+        if key == "eye_color" and skip_eye_color:
+            continue
         pick = _pick_first(buckets[key])
         if pick:
             _append(pick)
@@ -150,15 +167,9 @@ def build_prompt(
             for t in _pick(rng, buckets["pose"], n):
                 _append(t)
 
-    # expression
-    if ov.get("expression"):
-        for t in ov["expression"]:
-            _append(t)
-    else:
-        n = recipe.get("expression_n", 0)
-        if n:
-            for t in _pick(rng, buckets["expression"][:5], n):
-                _append(t)
+    # expression (already picked above)
+    for t in expression_picks:
+        _append(t)
 
     # framing
     if ov.get("framing"):
@@ -191,7 +202,18 @@ def build_prompt(
 
 def build_many(cfg, stats, scene, n, seed=None, extra_tags=None, overrides=None, exclude=None):
     rng = random.Random(seed)
-    return [
-        build_prompt(cfg, stats, scene, rng, extra_tags, overrides, exclude)
-        for _ in range(n)
-    ]
+    n = int(n)
+    max_closed = max(1, round(n / 3))
+    closed_count = 0
+    results = []
+    for _ in range(n):
+        block = closed_count >= max_closed
+        p = build_prompt(
+            cfg, stats, scene, rng, extra_tags, overrides, exclude,
+            block_closed_eyes=block,
+        )
+        tokens = {t.strip().lower() for t in p.positive.split(",")}
+        if tokens & _CLOSED_EYES:
+            closed_count += 1
+        results.append(p)
+    return results
