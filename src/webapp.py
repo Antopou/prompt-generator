@@ -566,14 +566,27 @@ def build_ui() -> gr.Blocks:
 
                 m_status = gr.Markdown("")
                 ex_status = gr.Markdown("")
+                m_search = gr.Textbox(label="Search LoRAs", placeholder="Type to filter...", lines=1, max_lines=1)
                 m_table = gr.Dataframe(
                     headers=["name", "imported", "id"],
                     datatype=["str", "str", "str"],
                     interactive=False, wrap=True,
+                    row_count=7,
+                    max_height=300,
                 )
                 m_log = gr.Textbox(label="Log", lines=3)
+                m_full_table = gr.State([])
 
-                connect_btn.click(list_all_loras, outputs=[m_table, m_status])
+                def _filter_table(query, full_data):
+                    if not full_data: return []
+                    if not query: return full_data
+                    q = query.lower()
+                    return [r for r in full_data if q in str(r[0]).lower()]
+
+                connect_btn.click(list_all_loras, outputs=[m_full_table, m_status]).then(
+                    _filter_table, inputs=[m_search, m_full_table], outputs=m_table
+                )
+                m_search.change(_filter_table, inputs=[m_search, m_full_table], outputs=m_table)
 
                 def _save_root(v):
                     v = (v or "").strip()
@@ -594,12 +607,14 @@ def build_ui() -> gr.Blocks:
                 m_table.select(_row_import, inputs=m_table, outputs=m_log).then(
                     refresh_choices, outputs=lora_dd
                 ).then(refresh_choices, outputs=ex_dd
-                ).then(list_all_loras, outputs=[m_table, m_status])
+                ).then(list_all_loras, outputs=[m_full_table, m_status]
+                ).then(_filter_table, inputs=[m_search, m_full_table], outputs=m_table)
 
                 ex_sync.click(sync_existing, inputs=ex_dd, outputs=ex_status)
                 ex_remove.click(remove_lora, inputs=ex_dd, outputs=[ex_status, lora_dd]).then(
                     refresh_choices, outputs=ex_dd
-                ).then(list_all_loras, outputs=[m_table, m_status])
+                ).then(list_all_loras, outputs=[m_full_table, m_status]
+                ).then(_filter_table, inputs=[m_search, m_full_table], outputs=m_table)
 
     return demo
 
