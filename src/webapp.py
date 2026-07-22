@@ -45,7 +45,9 @@ def _lora_choices() -> list[str]:
 # ------- Generate tab -------
 
 def _parse_exclude(text: str) -> set[str]:
-    return {t.strip() for t in (text or "").split(",") if t.strip()}
+    import re
+    parts = re.split(r"[,\n;]", text or "")
+    return {p.strip().rstrip(".").lower() for p in parts if p.strip().rstrip(".")}
 
 
 def do_generate(lora, scene, n, selections):
@@ -70,8 +72,17 @@ def do_generate(lora, scene, n, selections):
 
 def save_exclude(text):
     cfgmod.set_setting("exclude_tags", (text or "").strip())
-    n = len(_parse_exclude(text))
-    return f"saved {n} excluded tag(s)"
+    parsed = sorted(_parse_exclude(text))
+    if not parsed:
+        return "saved (empty — nothing excluded)"
+    return f"saved {len(parsed)} tag(s): `{', '.join(parsed)}`"
+
+
+def preview_exclude(text):
+    parsed = sorted(_parse_exclude(text))
+    if not parsed:
+        return "*preview: nothing to exclude*"
+    return f"*preview ({len(parsed)}): `{', '.join(parsed)}`*"
 
 
 # ------- Groups tab helpers -------
@@ -381,43 +392,41 @@ def build_ui() -> gr.Blocks:
                     with gr.Row():
                         groups_reload_btn = gr.Button("↻ Reload groups", scale=1)
                         groups_clear_btn = gr.Button("Clear selections", scale=1)
-                    categories_state = gr.State(groups.list_categories())
                     selections_state = gr.State({})
+                    empty_note = gr.Markdown(
+                        "*no groups yet — add some in the Groups tab, then click Reload*",
+                        visible=not any((c.get("groups") or {}) for c in groups.list_categories()),
+                    )
+                    group_dds: dict[str, gr.Dropdown] = {}
+                    _cats_by_name = {c["name"]: c for c in groups.list_categories()}
+                    for cname in groups.BUILTIN_CATEGORIES:
+                        _c = _cats_by_name.get(cname, {"groups": {}})
+                        _gnames = sorted((_c.get("groups") or {}).keys())
+                        group_dds[cname] = gr.Dropdown(
+                            choices=_gnames, value=[], multiselect=True,
+                            label=cname, interactive=True,
+                            visible=bool(_gnames),
+                        )
 
-                    @gr.render(inputs=categories_state)
-                    def _render_groups(cats):
-                        non_empty = [c for c in (cats or []) if (c.get("groups") or {})]
-                        if not non_empty:
-                            gr.Markdown("*no groups yet — add some in the Groups tab*")
-                            return
-                        for c in non_empty:
-                            cname = c["name"]
-                            gnames = sorted((c.get("groups") or {}).keys())
-                            dd = gr.Dropdown(
-                                choices=gnames,
-                                value=[],
-                                multiselect=True,
-                                label=cname,
-                                interactive=True,
-                                key=f"grp_dd_{cname}",
-                            )
-
-                            def _make_updater(cat=cname):
-                                def _update(picked, current):
-                                    current = dict(current or {})
-                                    current[cat] = picked or []
-                                    return current
-                                return _update
-
-                            dd.change(_make_updater(), inputs=[dd, selections_state],
-                                      outputs=selections_state)
+                    for cname, dd in group_dds.items():
+                        def _make_updater(cat=cname):
+                            def _update(picked, current):
+                                current = dict(current or {})
+                                current[cat] = picked or []
+                                return current
+                            return _update
+                        dd.change(_make_updater(), inputs=[dd, selections_state],
+                                  outputs=selections_state)
 
                 with gr.Accordion("Excluded tags", open=False):
                     exclude_in = gr.Textbox(
-                        label="Tags to exclude (comma-separated)",
+                        label="Tags to exclude (separate by comma, semicolon, or newline)",
                         lines=2,
                         placeholder="watermark, signature, text",
                         value=cfgmod.get_setting("exclude_tags", ""),
+                    )
+                    exclude_preview = gr.Markdown(
+                        preview_exclude(cfgmod.get_setting("exclude_tags", ""))
                     )
                     with gr.Row():
                         exclude_save_btn = gr.Button("Save", variant="primary")
@@ -450,15 +459,31 @@ def build_ui() -> gr.Blocks:
                 refresh_btn.click(refresh_choices, outputs=lora_dd)
 
                 # groups wiring
-                def _reload_groups_state():
-                    cats = groups.list_categories()
-                    return cats, {}
-                groups_reload_btn.click(
-                    _reload_groups_state,
-                    outputs=[categories_state, selections_state],
-                )
-                groups_clear_btn.click(lambda: {}, outputs=selections_state)
+                def _reload_dds():
+                    cats = {c["name"]: c for c in groups.list_categories()}
+                    updates = []
+                    any_visible = False
+                    for cname in groups.BUILTIN_CATEGORIES:
+                        c = cats.get(cname, {"groups": {}})
+                        gnames = sorted((c.get("groups") or {}).keys())
+                        updates.append(gr.update(choices=gnames, value=[], visible=bool(gnames)))
+                        if gnames:
+                            any_visible = True
+                    return [*updates, {}, gr.update(visible=not any_visible)]
 
+                groups_reload_btn.click(
+                    _reload_dds,
+                    outputs=[*group_dds.values(), selections_state, empty_note],
+                )
+
+                def _clear_dds():
+                    return [gr.update(value=[]) for _ in group_dds] + [{}]
+                groups_clear_btn.click(
+                    _clear_dds,
+                    outputs=[*group_dds.values(), selections_state],
+                )
+
+                exclude_in.change(preview_exclude, inputs=exclude_in, outputs=exclude_preview)
                 exclude_save_btn.click(save_exclude, inputs=exclude_in, outputs=exclude_status)
 
             # ---- Groups (library editor) ----

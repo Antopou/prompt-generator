@@ -113,12 +113,12 @@ def build_prompt(
     recipe = SCENES[scene]
     buckets = classify(stats)
     ov = overrides or {}
-    ex = exclude or set()
+    ex = {e.lower() for e in (exclude or set())}
 
     parts: list[str] = [cfg.trigger, "1girl", "solo"]
 
     def _append(tag: str) -> None:
-        if tag and tag not in parts and tag not in ex:
+        if tag and tag not in parts and tag.strip().lower() not in ex:
             parts.append(tag)
 
     # identity — top-1 of each if present (never overridable)
