@@ -106,17 +106,19 @@ def build_prompt(
     rng: random.Random,
     extra_tags: list[str] | None = None,
     overrides: dict[str, list[str]] | None = None,
+    exclude: set[str] | None = None,
 ) -> Prompt:
     if scene not in SCENES:
         raise KeyError(f"Unknown scene '{scene}'. Options: {list(SCENES)}")
     recipe = SCENES[scene]
     buckets = classify(stats)
     ov = overrides or {}
+    ex = exclude or set()
 
     parts: list[str] = [cfg.trigger, "1girl", "solo"]
 
     def _append(tag: str) -> None:
-        if tag and tag not in parts:
+        if tag and tag not in parts and tag not in ex:
             parts.append(tag)
 
     # identity — top-1 of each if present (never overridable)
@@ -187,9 +189,9 @@ def build_prompt(
     return Prompt(positive=", ".join(parts))
 
 
-def build_many(cfg, stats, scene, n, seed=None, extra_tags=None, overrides=None):
+def build_many(cfg, stats, scene, n, seed=None, extra_tags=None, overrides=None, exclude=None):
     rng = random.Random(seed)
     return [
-        build_prompt(cfg, stats, scene, rng, extra_tags, overrides)
+        build_prompt(cfg, stats, scene, rng, extra_tags, overrides, exclude)
         for _ in range(n)
     ]

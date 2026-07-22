@@ -23,6 +23,80 @@ GROUPS_PATH: Path = APP_DIR / "groups.json"
 
 VALID_BUCKETS = {"outfit", "pose", "expression", "framing", "background"}
 
+BUILTIN_CATEGORIES: tuple[str, ...] = (
+    "none", "outfit", "pose", "expression", "framing", "background",
+)
+
+_DEPRECATED_EMPTY: set[str] = {"extras", "general"}
+
+
+def infer_overrides(name: str) -> str | None:
+    """Category named after a bucket overrides that bucket; else None."""
+    return name if name in VALID_BUCKETS else None
+
+
+def ensure_builtins() -> None:
+    """Preseed built-in categories; strip empty deprecated ones."""
+    data = load()
+    changed = False
+    before = len(data["categories"])
+    data["categories"] = [
+        c for c in data["categories"]
+        if not (c["name"] in _DEPRECATED_EMPTY and not (c.get("groups") or {}))
+    ]
+    if len(data["categories"]) != before:
+        changed = True
+    have = {c["name"] for c in data["categories"]}
+    for name in BUILTIN_CATEGORIES:
+        if name in have:
+            continue
+        data["categories"].append({
+            "name": name,
+            "overrides": infer_overrides(name),
+            "groups": {},
+        })
+        changed = True
+    if changed:
+        save(data)
+
+
+def rename_category(old: str, new: str) -> None:
+    new = new.strip()
+    if not new:
+        raise ValueError("new name empty")
+    if old == new:
+        return
+    data = load()
+    if any(c["name"] == new for c in data["categories"]):
+        raise ValueError(f"'{new}' already exists")
+    for c in data["categories"]:
+        if c["name"] == old:
+            c["name"] = new
+            c["overrides"] = infer_overrides(new)
+            save(data)
+            return
+    raise KeyError(f"category '{old}' not found")
+
+
+def rename_group(cat_name: str, old: str, new: str) -> None:
+    new = new.strip()
+    if not new:
+        raise ValueError("new name empty")
+    if old == new:
+        return
+    data = load()
+    for c in data["categories"]:
+        if c["name"] == cat_name:
+            grps = c.setdefault("groups", {})
+            if old not in grps:
+                raise KeyError(f"group '{old}' not found")
+            if new in grps:
+                raise ValueError(f"'{new}' already exists in '{cat_name}'")
+            grps[new] = grps.pop(old)
+            save(data)
+            return
+    raise KeyError(f"category '{cat_name}' not found")
+
 
 def load() -> dict:
     ensure_app_dir()
