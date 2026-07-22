@@ -651,4 +651,6 @@ def run(share: bool = False, port: int = 7871, inline: bool = True) -> None:
     ui.launch(
         server_port=port, share=share, inbrowser=True, inline=inline,
         theme=_modern_theme(), css=getattr(ui, "_promptgen_css", None),
+        prevent_thread_lock=False,
     )
+    ui.block_thread()
