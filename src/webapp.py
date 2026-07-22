@@ -309,6 +309,12 @@ def build_ui() -> gr.Blocks:
     initial = _lora_choices()
     initial_presets = _preset_choices()
     css = """
+    button:not(.copy) {
+        padding: 4px 12px !important;
+        min-height: 28px !important;
+        font-size: 13px !important;
+        line-height: 1 !important;
+    }
     .prompt-card {
         background: var(--background-fill-secondary);
         border: 1px solid var(--border-color-primary);
@@ -335,7 +341,7 @@ def build_ui() -> gr.Blocks:
     """
     with gr.Blocks(title="Prompt Generator") as demo:
         demo._promptgen_css = css
-        gr.Markdown("## Prompt Generator")
+        gr.Markdown("## Prompt Generator\n---")
 
         with gr.Tabs():
             # ---- Generate ----
@@ -356,10 +362,6 @@ def build_ui() -> gr.Blocks:
                         groups_clear_btn = gr.Button("Clear selections", scale=1)
                     categories_state = gr.State(groups.list_categories())
                     selections_state = gr.State({})
-                    groups_hint = gr.Markdown(
-                        "_no categories yet — create some in the **Groups** tab_"
-                        if not groups.list_categories() else ""
-                    )
 
                     @gr.render(inputs=[categories_state, selections_state])
                     def _render_groups(cats, sel):
@@ -416,7 +418,6 @@ def build_ui() -> gr.Blocks:
                 @gr.render(inputs=prompts_state)
                 def _render_prompts(prompts):
                     if not prompts:
-                        gr.Markdown("_no prompts yet — click Generate_")
                         return
                     import html as _html
                     for text in prompts:
@@ -440,11 +441,10 @@ def build_ui() -> gr.Blocks:
                 # groups wiring
                 def _reload_groups_state():
                     cats = groups.list_categories()
-                    hint = "" if cats else "_no categories yet — create some in the **Groups** tab_"
-                    return cats, {}, hint
+                    return cats, {}
                 groups_reload_btn.click(
                     _reload_groups_state,
-                    outputs=[categories_state, selections_state, groups_hint],
+                    outputs=[categories_state, selections_state],
                 )
                 groups_clear_btn.click(lambda: {}, outputs=selections_state)
 
@@ -465,11 +465,6 @@ def build_ui() -> gr.Blocks:
 
             # ---- Groups (library editor) ----
             with gr.Tab("Groups"):
-                gr.Markdown(
-                    "Build a library of tag groups. Categories with an **override** "
-                    "bucket replace the auto-pick for that bucket. Categories with "
-                    "`none` append their tags as extras."
-                )
                 initial_cats = _cat_choices()
                 initial_cat_val = initial_cats[0] if initial_cats else None
                 initial_cat_obj = groups.get_category(initial_cat_val) if initial_cat_val else None
@@ -611,18 +606,34 @@ def build_ui() -> gr.Blocks:
 
 def _modern_theme() -> gr.themes.Base:
     """Clean, modern, and simple theme."""
-    return gr.themes.Soft(
+    theme = gr.themes.Soft(
         primary_hue=gr.themes.colors.indigo,
         secondary_hue=gr.themes.colors.indigo,
         neutral_hue=gr.themes.colors.slate,
-        font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
-        font_mono=[gr.themes.GoogleFont("Fira Code"), "monospace"],
+        font=["ui-monospace", "Consolas", "monospace"],
+        font_mono=["ui-monospace", "Consolas", "monospace"],
+        text_size=gr.themes.sizes.text_sm,
+        spacing_size=gr.themes.sizes.spacing_sm,
+        radius_size=gr.themes.sizes.radius_none,
     )
+    theme.set(
+        block_label_background_fill="transparent",
+        block_label_text_color="*neutral_500",
+        block_label_text_weight="bold",
+        block_title_background_fill="transparent",
+        block_title_text_color="*neutral_500",
+        block_title_text_weight="bold",
+        button_large_padding="4px 12px",
+        button_small_padding="4px 8px",
+        block_padding="6px",
+        input_padding="4px 8px",
+    )
+    return theme
 
 
-def run(share: bool = False, port: int = 7871) -> None:
+def run(share: bool = False, port: int = 7871, inline: bool = True) -> None:
     ui = build_ui()
     ui.launch(
-        server_port=port, share=share, inbrowser=True,
+        server_port=port, share=share, inbrowser=True, inline=inline,
         theme=_modern_theme(), css=getattr(ui, "_promptgen_css", None),
     )
