@@ -361,6 +361,7 @@ def build_ui() -> gr.Blocks:
         box-shadow: var(--shadow-sm);
     }
     .prompt-card .txt { white-space: pre-wrap; word-break: break-word; padding-right: 70px; }
+    .prompt-card .tag { cursor: pointer; }
     .prompt-card button.copy {
         position: absolute; top: 12px; right: 12px;
         background: var(--primary-500); color: white; border: none;
@@ -441,15 +442,23 @@ def build_ui() -> gr.Blocks:
                         return
                     import html as _html
                     for text in prompts:
-                        esc = _html.escape(text)
+                        tags = [t.strip() for t in text.split(",") if t.strip()]
+                        spans = []
+                        for i, t in enumerate(tags):
+                            esc = _html.escape(t)
+                            spans.append(
+                                f'<span class="tag" data-tag="{esc}" '
+                                f'onclick="navigator.clipboard.writeText(this.dataset.tag)">{esc}</span>'
+                            )
+                        inner = ", ".join(spans)
                         gr.HTML(
                             f'<div class="prompt-card">'
                             f'<button class="copy" onclick="'
-                            f"navigator.clipboard.writeText(this.nextElementSibling.textContent);"
+                            f"navigator.clipboard.writeText(this.nextElementSibling.textContent.replace(/\\u00A0/g,' '));"
                             f"this.textContent='copied';this.classList.add('done');"
                             f"setTimeout(()=>{{this.textContent='copy';this.classList.remove('done');}},1200);"
                             f'">copy</button>'
-                            f'<div class="txt">{esc}</div>'
+                            f'<div class="txt">{inner}</div>'
                             f'</div>'
                         )
 
